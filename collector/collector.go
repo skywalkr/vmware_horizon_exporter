@@ -103,6 +103,39 @@ var (
 			[]string{"horizon_site_name", "horizon_pod_name", "horizon_gateway_name", "protocol"}, nil,
 		),
 	}
+
+	licenseDesc = map[string]*prometheus.Desc{
+		"info": prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "license", "info"),
+			"A metric with a constant '1' value labeled by site name, pod name, mode, health, and usage model",
+			[]string{"horizon_site_name", "horizon_pod_name", "mode", "health", "usage_model"}, nil,
+		),
+		"earliest_expiry": prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "license", "earliest_expiry"),
+			"Last license or subscription expiry in unixtime",
+			[]string{"horizon_site_name", "horizon_pod_name"}, nil,
+		),
+		"usage_collaborators_total": prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "license", "usage_collaborators_total"),
+			"Total number of users that are connected to a collaborative session, including the session owner and any collaborators",
+			[]string{"horizon_site_name", "horizon_pod_name"}, nil,
+		),
+		"usage_concurrent_connections_total": prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "license", "usage_concurrent_connections_total"),
+			"Concurrent connection user count",
+			[]string{"horizon_site_name", "horizon_pod_name"}, nil,
+		),
+		"usage_concurrent_sessions_total": prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "license", "usage_concurrent_sessions_total"),
+			"Concurrent session count",
+			[]string{"horizon_site_name", "horizon_pod_name"}, nil,
+		),
+		"usage_named_users_total": prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "license", "usage_named_users_total"),
+			"Number of unique users that have accessed the Horizon environment since the Horizon deployment was first configured or since the last Named Users Count reset",
+			[]string{"horizon_site_name", "horizon_pod_name"}, nil,
+		),
+	}
 )
 
 type HorizonConfig struct {
@@ -115,15 +148,15 @@ type HorizonConfig struct {
 }
 
 type HorizonInventory struct {
-	pods  []gohorizon.PodInfo
-	sites []gohorizon.SiteInfo
-	pools []gohorizon.DesktopPoolInfoV7
+	licenses []gohorizon.LicenseInfoV2
+	pods     []gohorizon.PodInfo
+	pools    []gohorizon.DesktopPoolInfoV7
+	sites    []gohorizon.SiteInfo
 
 	localPod  *gohorizon.PodInfo
 	localSite *gohorizon.SiteInfo
 
 	lastDiscovered time.Time
-	//discoveryInterval time.Duration
 }
 
 // HorizonCollector implements the prometheus.Collector interface.
@@ -190,6 +223,9 @@ func (hc HorizonCollector) Collect(ch chan<- prometheus.Metric) {
 		return hc.collectGatewayMetrics(ctx, ch)
 	})
 	g.Go(func() error {
+		return hc.collectLicenseUsageMetrics(ctx, ch)
+	})
+	g.Go(func() error {
 		return hc.collectSAMLAuthenticatorMetrics(ctx, ch)
 	})
 
@@ -226,6 +262,10 @@ func (hc HorizonCollector) Describe(ch chan<- *prometheus.Desc) {
 
 	for key := range gtwyServerDesc {
 		ch <- gtwyServerDesc[key]
+	}
+
+	for key := range licenseDesc {
+		ch <- licenseDesc[key]
 	}
 }
 
@@ -271,6 +311,16 @@ func (hc *HorizonCollector) discover(ctx context.Context) error {
 
 	hc.inventory.pools = pools
 
+	ctx4, cancel4 := context.WithTimeout(ctx, hc.config.Timeout)
+	defer cancel4()
+	licenses, _, err := hc.ac.ConfigAPI.ListLicensesV2(ctx4).Execute()
+
+	if err != nil {
+		return err
+	}
+
+	hc.inventory.licenses = licenses
+
 	return nil
 }
 
@@ -278,7 +328,6 @@ func (hc *HorizonCollector) collectADDomainMetrics(ctx context.Context, ch chan<
 	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel1()
 	items, _, err := hc.ac.MonitorAPI.ListADDomainMonitorInfosV2(ctx1).Execute()
-
 	if err != nil {
 		return err
 	}
@@ -430,7 +479,6 @@ func (hc *HorizonCollector) collectGatewayMetrics(ctx context.Context, ch chan<-
 	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel1()
 	items, _, err := hc.ac.MonitorAPI.ListGatewayMonitorInfoV3(ctx1).Execute()
-
 	if err != nil {
 		return err
 	}
@@ -565,11 +613,81 @@ func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- 
 	return nil
 }
 
+func (hc *HorizonCollector) collectLicenseUsageMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
+	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel1()
+	metric, _, err := hc.ac.MonitorAPI.GetLicenseUsageMetrics(ctx1).Execute()
+	if err != nil {
+		return err
+	}
+
+	var expiry *int64
+	if *hc.inventory.licenses[0].LicenseMode == "SUBSCRIPTION" {
+		if *hc.inventory.licenses[0].ExpirationTime < *hc.inventory.licenses[0].SubscriptionSliceExpiry {
+			expiry = hc.inventory.licenses[0].ExpirationTime
+		} else {
+			expiry = hc.inventory.licenses[0].SubscriptionSliceExpiry
+		}
+	}
+
+	ch <- prometheus.MustNewConstMetric(
+		licenseDesc["info"],
+		prometheus.GaugeValue,
+		1,
+		*hc.inventory.localSite.Name,
+		*hc.inventory.localPod.Name,
+		*hc.inventory.licenses[0].LicenseMode,
+		*hc.inventory.licenses[0].LicenseHealth,
+		*hc.inventory.licenses[0].UsageModel,
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		licenseDesc["earliest_expiry"],
+		prometheus.GaugeValue,
+		float64(*expiry),
+		*hc.inventory.localSite.Name,
+		*hc.inventory.localPod.Name,
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		licenseDesc["usage_collaborators_total"],
+		prometheus.GaugeValue,
+		float64(*metric.CurrentUsage.TotalCollaborators),
+		*hc.inventory.localSite.Name,
+		*hc.inventory.localPod.Name,
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		licenseDesc["usage_concurrent_connections_total"],
+		prometheus.GaugeValue,
+		float64(*metric.CurrentUsage.TotalConcurrentConnections),
+		*hc.inventory.localSite.Name,
+		*hc.inventory.localPod.Name,
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		licenseDesc["usage_concurrent_sessions_total"],
+		prometheus.GaugeValue,
+		float64(*metric.CurrentUsage.TotalConcurrentSessions),
+		*hc.inventory.localSite.Name,
+		*hc.inventory.localPod.Name,
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		licenseDesc["usage_named_users_total"],
+		prometheus.GaugeValue,
+		float64(*metric.CurrentUsage.TotalNamedUsers),
+		*hc.inventory.localSite.Name,
+		*hc.inventory.localPod.Name,
+	)
+
+	return nil
+}
+
 func (hc *HorizonCollector) collectSAMLAuthenticatorMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
 	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel1()
 	items, _, err := hc.ac.MonitorAPI.ListSAMLAuthenticatorMonitorsV2(ctx1).Execute()
-
 	if err != nil {
 		return err
 	}
