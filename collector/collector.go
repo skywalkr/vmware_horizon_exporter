@@ -13,7 +13,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/umich-vci/gohorizon"
+	"github.com/skywalkr/gohorizon/v8"
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/errgroup"
 )
@@ -27,116 +27,126 @@ var (
 		"scrape_duration": prometheus.NewDesc(prometheus.BuildFQName(namespace, "scrape", "collector_duration_seconds"), "Duration of the collector scrape.", []string{}, nil),
 	}
 
-	globalDesc = map[string]*prometheus.Desc{
-		"sessions": prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, "global", "session_count"),
-			"Summary of the locally resourced sessions in the environment",
-			[]string{"horizon_site_name", "horizon_pod_name", "type", "state"}, nil,
-		),
-	}
-
 	connServerDesc = map[string]*prometheus.Desc{
 		"info": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "connserver", "info"),
-			"A metric with a constant '1' value labeled by build, site name, pod name, name, id, status, and version",
-			[]string{"build", "horizon_site_name", "horizon_pod_name", "horizon_connection_server_name", "id", "status", "version"}, nil,
+			"A metric with a constant '1' value labeled by build, pod name, name, id, status, and version",
+			[]string{"build", "horizon_pod_name", "horizon_connection_server_name", "id", "status", "version"}, nil,
 		),
 		"connections": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "connserver", "connection_count"),
 			"Number of active connections to the connection server.",
-			[]string{"horizon_site_name", "horizon_pod_name", "horizon_connection_server_name"}, nil,
+			[]string{"horizon_pod_name", "horizon_connection_server_name"}, nil,
 		),
 		"tunnel_connections": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "connserver", "tunneled_connection_count"),
 			"Number of connections tunneled through connection server.",
-			[]string{"horizon_site_name", "horizon_pod_name", "horizon_connection_server_name"}, nil,
+			[]string{"horizon_pod_name", "horizon_connection_server_name"}, nil,
 		),
 		"service_status": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "connserver", "service_status"),
 			"Status of connection server related Windows services.",
-			[]string{"horizon_site_name", "horizon_pod_name", "horizon_connection_server_name", "name", "status"}, nil,
+			[]string{"horizon_pod_name", "horizon_connection_server_name", "name", "status"}, nil,
 		),
 		"protocol_sessions": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "connserver", "session_count"),
 			"Details of connected sessions.",
-			[]string{"horizon_site_name", "horizon_pod_name", "horizon_connection_server_name", "protocol"}, nil,
+			[]string{"horizon_pod_name", "horizon_connection_server_name", "protocol"}, nil,
 		),
 		"addomain_status": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "connserver", "addomain_status"),
 			"Status of the AD domain with respect to connection server.",
-			[]string{"horizon_site_name", "horizon_pod_name", "horizon_connection_server_name", "dns_name", "status"}, nil,
+			[]string{"horizon_pod_name", "horizon_connection_server_name", "dns_name", "status"}, nil,
 		),
 		"samlauth_status": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "connserver", "samlauth_status"),
 			"Status of the SAML authenticator with respect to connection server.",
-			[]string{"horizon_site_name", "horizon_pod_name", "horizon_connection_server_name", "label", "status"}, nil,
+			[]string{"horizon_pod_name", "horizon_connection_server_name", "label", "status"}, nil,
 		),
 	}
 
 	desktPoolDesc = map[string]*prometheus.Desc{
 		"info": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "desktpool", "info"),
-			"A metric with a constant '1' value labeled by site name, pod name, name, id, source, type, and user assignment",
-			[]string{"horizon_site_name", "horizon_pod_name", "horizon_desktop_pool_name", "id", "source", "type", "user_assignment"}, nil,
+			"A metric with a constant '1' value labeled by pod name, name, id, source, type, and user assignment",
+			[]string{"horizon_pod_name", "horizon_desktop_pool_name", "id", "source", "type", "user_assignment"}, nil,
 		),
 		"machines": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "desktpool", "machine_count"),
 			"Number of active connections to the connection server.",
-			[]string{"horizon_site_name", "horizon_pod_name", "horizon_desktop_pool_name"}, nil,
+			[]string{"horizon_pod_name", "horizon_desktop_pool_name"}, nil,
 		),
 		"sessions": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "desktpool", "session_count"),
 			"Number of active connections to the connection server.",
-			[]string{"horizon_site_name", "horizon_pod_name", "horizon_desktop_pool_name"}, nil,
+			[]string{"horizon_pod_name", "horizon_desktop_pool_name"}, nil,
 		),
 	}
 
 	gtwyServerDesc = map[string]*prometheus.Desc{
 		"info": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "gateway", "info"),
-			"A metric with a constant '1' value labeled by pod name, hostname, id, status, type, and version",
-			[]string{"horizon_site_name", "horizon_pod_name", "horizon_gateway_name", "hostname", "id", "status", "type", "version"}, nil,
+			"A metric with a constant '1' value labeled by pod name, name, host, id, status, type, and version",
+			[]string{"horizon_pod_name", "horizon_gateway_name", "host", "id", "status", "type", "version"}, nil,
 		),
 		"connections": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "gateway", "connection_count"),
 			"Number of active connections to the gateway",
-			[]string{"horizon_site_name", "horizon_pod_name", "horizon_gateway_name", "protocol"}, nil,
+			[]string{"horizon_pod_name", "horizon_gateway_name", "protocol"}, nil,
 		),
 	}
 
 	licenseDesc = map[string]*prometheus.Desc{
 		"info": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "license", "info"),
-			"A metric with a constant '1' value labeled by site name, pod name, mode, health, and usage model",
-			[]string{"horizon_site_name", "horizon_pod_name", "mode", "health", "usage_model"}, nil,
+			"A metric with a constant '1' value labeled by pod name, mode, health, and usage model",
+			[]string{"horizon_pod_name", "mode", "health", "usage_model"}, nil,
 		),
 		"earliest_expiry": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "license", "earliest_expiry"),
 			"Last license or subscription expiry in unixtime",
-			[]string{"horizon_site_name", "horizon_pod_name"}, nil,
+			[]string{"horizon_pod_name"}, nil,
 		),
 		"usage_collaborators_total": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "license", "usage_collaborators_total"),
 			"Total number of users that are connected to a collaborative session, including the session owner and any collaborators",
-			[]string{"horizon_site_name", "horizon_pod_name"}, nil,
+			[]string{"horizon_pod_name"}, nil,
 		),
 		"usage_concurrent_connections_total": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "license", "usage_concurrent_connections_total"),
 			"Concurrent connection user count",
-			[]string{"horizon_site_name", "horizon_pod_name"}, nil,
+			[]string{"horizon_pod_name"}, nil,
 		),
 		"usage_concurrent_sessions_total": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "license", "usage_concurrent_sessions_total"),
 			"Concurrent session count",
-			[]string{"horizon_site_name", "horizon_pod_name"}, nil,
+			[]string{"horizon_pod_name"}, nil,
 		),
 		"usage_named_users_total": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "license", "usage_named_users_total"),
 			"Number of unique users that have accessed the Horizon environment since the Horizon deployment was first configured or since the last Named Users Count reset",
-			[]string{"horizon_site_name", "horizon_pod_name"}, nil,
+			[]string{"horizon_pod_name"}, nil,
+		),
+	}
+
+	localDesc = map[string]*prometheus.Desc{
+		"sessions": prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "local", "sessions_count"),
+			"Summary of the locally resourced sessions in the environment",
+			[]string{"horizon_pod_name", "type", "state"}, nil,
+		),
+	}
+
+	vcenterDesc = map[string]*prometheus.Desc{
+		"info": prometheus.NewDesc(
+			prometheus.BuildFQName(namespace, "vcenter", "info"),
+			"A metric with a constant '1' value labeled by pod name, name, id, and version",
+			[]string{"horizon_pod_name", "server_name", "id", "version"}, nil,
 		),
 	}
 )
+
+//type horizonScrapeData struct {}
 
 type HorizonConfig struct {
 	Domain            string
@@ -148,10 +158,9 @@ type HorizonConfig struct {
 }
 
 type HorizonInventory struct {
-	licenses []gohorizon.LicenseInfoV2
-	pods     []gohorizon.PodInfo
-	pools    []gohorizon.DesktopPoolInfoV7
-	sites    []gohorizon.SiteInfo
+	pods  []gohorizon.PodInfo
+	pools []gohorizon.DesktopPoolInfoV2
+	sites []gohorizon.SiteInfo
 
 	localPod  *gohorizon.PodInfo
 	localSite *gohorizon.SiteInfo
@@ -166,6 +175,7 @@ type HorizonCollector struct {
 	logger       log.Logger
 	inventory    *HorizonInventory
 	inventoryMux sync.Mutex
+	//scrapeData   *horizonScrapeData
 }
 
 // NewHorizonCollector creates a new HorizonCollector.
@@ -194,6 +204,8 @@ func (hc HorizonCollector) Collect(ch chan<- prometheus.Metric) {
 	var success float64
 	ctx := context.Background()
 
+	//hc.scrapeData = &horizonScrapeData{}
+
 	hc.inventoryMux.Lock()
 	if begin.Sub(hc.inventory.lastDiscovered) > hc.config.DiscoveryInterval {
 		if err := hc.discover(ctx); err != nil {
@@ -206,10 +218,8 @@ func (hc HorizonCollector) Collect(ch chan<- prometheus.Metric) {
 	hc.inventoryMux.Unlock()
 
 	begin = time.Now()
+
 	g, ctx := errgroup.WithContext(ctx)
-	g.Go(func() error {
-		return hc.collectGlobalMetrics(ctx, ch)
-	})
 	g.Go(func() error {
 		return hc.collectADDomainMetrics(ctx, ch)
 	})
@@ -223,10 +233,16 @@ func (hc HorizonCollector) Collect(ch chan<- prometheus.Metric) {
 		return hc.collectGatewayMetrics(ctx, ch)
 	})
 	g.Go(func() error {
-		return hc.collectLicenseUsageMetrics(ctx, ch)
+		return hc.collectLicenseMetrics(ctx, ch)
 	})
 	g.Go(func() error {
 		return hc.collectSAMLAuthenticatorMetrics(ctx, ch)
+	})
+	g.Go(func() error {
+		return hc.collectSessionMetrics(ctx, ch)
+	})
+	g.Go(func() error {
+		return hc.collectVirtualCenterMetrics(ctx, ch)
 	})
 
 	err := g.Wait()
@@ -244,12 +260,12 @@ func (hc HorizonCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 // Describe implements the prometheus.Collector interface.
-func (hc HorizonCollector) Describe(ch chan<- *prometheus.Desc) {
+func (hc *HorizonCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- collDesc["scrape_duration"]
 	ch <- collDesc["scrape_success"]
 
-	for key := range globalDesc {
-		ch <- globalDesc[key]
+	for key := range localDesc {
+		ch <- localDesc[key]
 	}
 
 	for key := range connServerDesc {
@@ -266,6 +282,10 @@ func (hc HorizonCollector) Describe(ch chan<- *prometheus.Desc) {
 
 	for key := range licenseDesc {
 		ch <- licenseDesc[key]
+	}
+
+	for key := range vcenterDesc {
+		ch <- vcenterDesc[key]
 	}
 }
 
@@ -303,7 +323,7 @@ func (hc *HorizonCollector) discover(ctx context.Context) error {
 
 	ctx3, cancel3 := context.WithTimeout(ctx, hc.config.Timeout)
 	defer cancel3()
-	pools, _, err := hc.ac.InventoryAPI.ListDesktopPoolsV7(ctx3).Execute()
+	pools, _, err := hc.ac.InventoryAPI.ListDesktopPoolsV2(ctx3).Execute()
 
 	if err != nil {
 		return err
@@ -311,23 +331,13 @@ func (hc *HorizonCollector) discover(ctx context.Context) error {
 
 	hc.inventory.pools = pools
 
-	ctx4, cancel4 := context.WithTimeout(ctx, hc.config.Timeout)
-	defer cancel4()
-	licenses, _, err := hc.ac.ConfigAPI.ListLicensesV2(ctx4).Execute()
-
-	if err != nil {
-		return err
-	}
-
-	hc.inventory.licenses = licenses
-
 	return nil
 }
 
 func (hc *HorizonCollector) collectADDomainMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
 	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel1()
-	items, _, err := hc.ac.MonitorAPI.ListADDomainMonitorInfosV2(ctx1).Execute()
+	items, _, err := hc.ac.MonitorAPI.ListADDomainMonitorInfosV3(ctx1).Execute()
 	if err != nil {
 		return err
 	}
@@ -338,7 +348,6 @@ func (hc *HorizonCollector) collectADDomainMetrics(ctx context.Context, ch chan<
 				connServerDesc["addomain_status"],
 				prometheus.GaugeValue,
 				1,
-				*hc.inventory.localSite.Name,
 				*hc.inventory.localPod.Name,
 				*subItem.Name,
 				*item.DnsName,
@@ -353,7 +362,7 @@ func (hc *HorizonCollector) collectADDomainMetrics(ctx context.Context, ch chan<
 func (hc *HorizonCollector) collectConnectionServerMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
 	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel1()
-	items, _, err := hc.ac.MonitorAPI.ListConnectionServerMonitorsV3(ctx1).Execute()
+	items, _, err := hc.ac.MonitorAPI.ListConnectionServerMonitors(ctx1).Execute()
 
 	if err != nil {
 		return err
@@ -365,10 +374,9 @@ func (hc *HorizonCollector) collectConnectionServerMetrics(ctx context.Context, 
 			prometheus.GaugeValue,
 			1,
 			*item.Details.Build,
-			*hc.inventory.localSite.Name,
 			*hc.inventory.localPod.Name,
 			*item.Name,
-			item.Id,
+			*item.Id,
 			*item.Status,
 			*item.Details.Version,
 		)
@@ -377,7 +385,6 @@ func (hc *HorizonCollector) collectConnectionServerMetrics(ctx context.Context, 
 			connServerDesc["connections"],
 			prometheus.GaugeValue,
 			float64(*item.ConnectionCount),
-			*hc.inventory.localSite.Name,
 			*hc.inventory.localPod.Name,
 			*item.Name,
 		)
@@ -386,7 +393,6 @@ func (hc *HorizonCollector) collectConnectionServerMetrics(ctx context.Context, 
 			connServerDesc["tunnel_connections"],
 			prometheus.GaugeValue,
 			float64(*item.TunnelConnectionCount),
-			*hc.inventory.localSite.Name,
 			*hc.inventory.localPod.Name,
 			*item.Name,
 		)
@@ -396,7 +402,6 @@ func (hc *HorizonCollector) collectConnectionServerMetrics(ctx context.Context, 
 				connServerDesc["service_status"],
 				prometheus.GaugeValue,
 				1,
-				*hc.inventory.localSite.Name,
 				*hc.inventory.localPod.Name,
 				*item.Name,
 				*subItem.ServiceName,
@@ -409,7 +414,6 @@ func (hc *HorizonCollector) collectConnectionServerMetrics(ctx context.Context, 
 				connServerDesc["protocol_sessions"],
 				prometheus.GaugeValue,
 				float64(*subItem.SessionCount),
-				*hc.inventory.localSite.Name,
 				*hc.inventory.localPod.Name,
 				*item.Name,
 				*subItem.SessionProtocol,
@@ -438,13 +442,12 @@ func (hc *HorizonCollector) collectDesktopPoolMetrics(ctx context.Context, ch ch
 	}
 
 	for _, item := range items {
-		desktPool := &hc.inventory.pools[slices.IndexFunc(hc.inventory.pools, func(o gohorizon.DesktopPoolInfoV7) bool { return *o.Id == *item.Id })]
+		desktPool := &hc.inventory.pools[slices.IndexFunc(hc.inventory.pools, func(o gohorizon.DesktopPoolInfoV2) bool { return *o.Id == *item.Id })]
 
 		ch <- prometheus.MustNewConstMetric(
 			desktPoolDesc["info"],
 			prometheus.GaugeValue,
 			1,
-			*hc.inventory.localSite.Name,
 			*hc.inventory.localPod.Name,
 			*desktPool.Name,
 			*desktPool.Id,
@@ -457,7 +460,6 @@ func (hc *HorizonCollector) collectDesktopPoolMetrics(ctx context.Context, ch ch
 			desktPoolDesc["machines"],
 			prometheus.GaugeValue,
 			float64(*item.NumMachines),
-			*hc.inventory.localSite.Name,
 			*hc.inventory.localPod.Name,
 			*desktPool.Name,
 		)
@@ -466,7 +468,6 @@ func (hc *HorizonCollector) collectDesktopPoolMetrics(ctx context.Context, ch ch
 			desktPoolDesc["sessions"],
 			prometheus.GaugeValue,
 			float64(*item.NumConnectedSessions),
-			*hc.inventory.localSite.Name,
 			*hc.inventory.localPod.Name,
 			*desktPool.Name,
 		)
@@ -478,7 +479,7 @@ func (hc *HorizonCollector) collectDesktopPoolMetrics(ctx context.Context, ch ch
 func (hc *HorizonCollector) collectGatewayMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
 	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel1()
-	items, _, err := hc.ac.MonitorAPI.ListGatewayMonitorInfoV3(ctx1).Execute()
+	items, _, err := hc.ac.MonitorAPI.ListGatewayMonitorInfoV2(ctx1).Execute()
 	if err != nil {
 		return err
 	}
@@ -488,7 +489,6 @@ func (hc *HorizonCollector) collectGatewayMetrics(ctx context.Context, ch chan<-
 			gtwyServerDesc["info"],
 			prometheus.GaugeValue,
 			1,
-			*hc.inventory.localSite.Name,
 			*hc.inventory.localPod.Name,
 			*item.Name,
 			*item.Details.Address,
@@ -502,7 +502,6 @@ func (hc *HorizonCollector) collectGatewayMetrics(ctx context.Context, ch chan<-
 			gtwyServerDesc["connections"],
 			prometheus.GaugeValue,
 			float64(*item.BlastConnectionCount),
-			*hc.inventory.localSite.Name,
 			*hc.inventory.localPod.Name,
 			*item.Name,
 			"BLAST",
@@ -512,7 +511,6 @@ func (hc *HorizonCollector) collectGatewayMetrics(ctx context.Context, ch chan<-
 			gtwyServerDesc["connections"],
 			prometheus.GaugeValue,
 			float64(*item.PcoipConnectionCount),
-			*hc.inventory.localSite.Name,
 			*hc.inventory.localPod.Name,
 			*item.Name,
 			"PCOIP",
@@ -522,7 +520,7 @@ func (hc *HorizonCollector) collectGatewayMetrics(ctx context.Context, ch chan<-
 	return nil
 }
 
-func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
+/* func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
 	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel1()
 	metrics, _, err := hc.ac.MonitorAPI.GetSessionMetrics(ctx1).Execute()
@@ -531,7 +529,7 @@ func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- 
 	}
 
 	ch <- prometheus.MustNewConstMetric(
-		globalDesc["sessions"],
+		localDesc["sessions"],
 		prometheus.GaugeValue,
 		float64(*metrics.ApplicationSessionMetrics.NumActiveSessions),
 		*hc.inventory.localSite.Name,
@@ -541,7 +539,7 @@ func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- 
 	)
 
 	ch <- prometheus.MustNewConstMetric(
-		globalDesc["sessions"],
+		localDesc["sessions"],
 		prometheus.GaugeValue,
 		float64(*metrics.ApplicationSessionMetrics.NumDisconnectedSessions),
 		*hc.inventory.localSite.Name,
@@ -551,7 +549,7 @@ func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- 
 	)
 
 	ch <- prometheus.MustNewConstMetric(
-		globalDesc["sessions"],
+		localDesc["sessions"],
 		prometheus.GaugeValue,
 		float64(*metrics.ApplicationSessionMetrics.NumIdleSessions),
 		*hc.inventory.localSite.Name,
@@ -561,7 +559,7 @@ func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- 
 	)
 
 	ch <- prometheus.MustNewConstMetric(
-		globalDesc["sessions"],
+		localDesc["sessions"],
 		prometheus.GaugeValue,
 		float64(*metrics.ApplicationSessionMetrics.NumPendingSessions),
 		*hc.inventory.localSite.Name,
@@ -571,7 +569,7 @@ func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- 
 	)
 
 	ch <- prometheus.MustNewConstMetric(
-		globalDesc["sessions"],
+		localDesc["sessions"],
 		prometheus.GaugeValue,
 		float64(*metrics.DesktopSessionMetrics.NumActiveSessions),
 		*hc.inventory.localSite.Name,
@@ -581,7 +579,7 @@ func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- 
 	)
 
 	ch <- prometheus.MustNewConstMetric(
-		globalDesc["sessions"],
+		localDesc["sessions"],
 		prometheus.GaugeValue,
 		float64(*metrics.DesktopSessionMetrics.NumDisconnectedSessions),
 		*hc.inventory.localSite.Name,
@@ -591,7 +589,7 @@ func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- 
 	)
 
 	ch <- prometheus.MustNewConstMetric(
-		globalDesc["sessions"],
+		localDesc["sessions"],
 		prometheus.GaugeValue,
 		float64(*metrics.DesktopSessionMetrics.NumIdleSessions),
 		*hc.inventory.localSite.Name,
@@ -601,7 +599,7 @@ func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- 
 	)
 
 	ch <- prometheus.MustNewConstMetric(
-		globalDesc["sessions"],
+		localDesc["sessions"],
 		prometheus.GaugeValue,
 		float64(*metrics.DesktopSessionMetrics.NumPendingSessions),
 		*hc.inventory.localSite.Name,
@@ -611,22 +609,22 @@ func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- 
 	)
 
 	return nil
-}
+} */
 
-func (hc *HorizonCollector) collectLicenseUsageMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
+func (hc *HorizonCollector) collectLicenseMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
 	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel1()
-	metric, _, err := hc.ac.MonitorAPI.GetLicenseUsageMetrics(ctx1).Execute()
+	items, _, err := hc.ac.ConfigAPI.ListLicensesV2(ctx1).Execute()
 	if err != nil {
 		return err
 	}
 
 	var expiry *int64
-	if *hc.inventory.licenses[0].LicenseMode == "SUBSCRIPTION" {
-		if *hc.inventory.licenses[0].ExpirationTime < *hc.inventory.licenses[0].SubscriptionSliceExpiry {
-			expiry = hc.inventory.licenses[0].ExpirationTime
+	if *items[0].LicenseMode == "SUBSCRIPTION" {
+		if *items[0].ExpirationTime < *items[0].SubscriptionSliceExpiry {
+			expiry = items[0].ExpirationTime
 		} else {
-			expiry = hc.inventory.licenses[0].SubscriptionSliceExpiry
+			expiry = items[0].SubscriptionSliceExpiry
 		}
 	}
 
@@ -634,52 +632,50 @@ func (hc *HorizonCollector) collectLicenseUsageMetrics(ctx context.Context, ch c
 		licenseDesc["info"],
 		prometheus.GaugeValue,
 		1,
-		*hc.inventory.localSite.Name,
 		*hc.inventory.localPod.Name,
-		*hc.inventory.licenses[0].LicenseMode,
-		*hc.inventory.licenses[0].LicenseHealth,
-		*hc.inventory.licenses[0].UsageModel,
+		*items[0].LicenseMode,
+		*items[0].LicenseHealth,
+		*items[0].UsageModel,
 	)
 
 	ch <- prometheus.MustNewConstMetric(
 		licenseDesc["earliest_expiry"],
 		prometheus.GaugeValue,
 		float64(*expiry),
-		*hc.inventory.localSite.Name,
 		*hc.inventory.localPod.Name,
 	)
 
-	ch <- prometheus.MustNewConstMetric(
-		licenseDesc["usage_collaborators_total"],
-		prometheus.GaugeValue,
-		float64(*metric.CurrentUsage.TotalCollaborators),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-	)
+	/* 	ch <- prometheus.MustNewConstMetric(
+	   		licenseDesc["usage_collaborators_total"],
+	   		prometheus.GaugeValue,
+	   		float64(*metric.CurrentUsage.TotalCollaborators),
+	   		*hc.inventory.localSite.Name,
+	   		*hc.inventory.localPod.Name,
+	   	)
 
-	ch <- prometheus.MustNewConstMetric(
-		licenseDesc["usage_concurrent_connections_total"],
-		prometheus.GaugeValue,
-		float64(*metric.CurrentUsage.TotalConcurrentConnections),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-	)
+	   	ch <- prometheus.MustNewConstMetric(
+	   		licenseDesc["usage_concurrent_connections_total"],
+	   		prometheus.GaugeValue,
+	   		float64(*metric.CurrentUsage.TotalConcurrentConnections),
+	   		*hc.inventory.localSite.Name,
+	   		*hc.inventory.localPod.Name,
+	   	)
 
-	ch <- prometheus.MustNewConstMetric(
-		licenseDesc["usage_concurrent_sessions_total"],
-		prometheus.GaugeValue,
-		float64(*metric.CurrentUsage.TotalConcurrentSessions),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-	)
+	   	ch <- prometheus.MustNewConstMetric(
+	   		licenseDesc["usage_concurrent_sessions_total"],
+	   		prometheus.GaugeValue,
+	   		float64(*metric.CurrentUsage.TotalConcurrentSessions),
+	   		*hc.inventory.localSite.Name,
+	   		*hc.inventory.localPod.Name,
+	   	)
 
-	ch <- prometheus.MustNewConstMetric(
-		licenseDesc["usage_named_users_total"],
-		prometheus.GaugeValue,
-		float64(*metric.CurrentUsage.TotalNamedUsers),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-	)
+	   	ch <- prometheus.MustNewConstMetric(
+	   		licenseDesc["usage_named_users_total"],
+	   		prometheus.GaugeValue,
+	   		float64(*metric.CurrentUsage.TotalNamedUsers),
+	   		*hc.inventory.localSite.Name,
+	   		*hc.inventory.localPod.Name,
+	   	) */
 
 	return nil
 }
@@ -698,13 +694,129 @@ func (hc *HorizonCollector) collectSAMLAuthenticatorMetrics(ctx context.Context,
 				connServerDesc["samlauth_status"],
 				prometheus.GaugeValue,
 				1,
-				*hc.inventory.localSite.Name,
 				*hc.inventory.localPod.Name,
 				*subItem.Name,
 				*item.Details.Label,
 				*subItem.Status,
 			)
 		}
+	}
+
+	return nil
+}
+
+func (hc *HorizonCollector) collectSessionMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
+	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel1()
+	items, _, err := hc.ac.InventoryAPI.ListSessionInfo(ctx1).Execute()
+	if err != nil {
+		return err
+	}
+
+	i := map[string]map[string]int{"APPLICATION": {"ACTIVE": 0, "DISCONNECTED": 0, "IDLE": 0, "PENDING": 0}, "DESKTOP": {"ACTIVE": 0, "DISCONNECTED": 0, "IDLE": 0, "PENDING": 0}}
+	for _, item := range items {
+		i[*item.SessionType][*item.SessionState] += 1
+
+		if *item.SessionState == "CONNECTED" {
+			if *item.IdleDuration > 0 {
+				i[*item.SessionType]["IDLE"] += 1
+			}
+		}
+	}
+
+	ch <- prometheus.MustNewConstMetric(
+		localDesc["sessions"],
+		prometheus.GaugeValue,
+		float64(i["APPLICATION"]["CONNECTED"]-i["APPLICATION"]["IDLE"]),
+		*hc.inventory.localPod.Name,
+		"APPLICATION",
+		"ACTIVE",
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		localDesc["sessions"],
+		prometheus.GaugeValue,
+		float64(i["APPLICATION"]["DISCONNECTED"]),
+		*hc.inventory.localPod.Name,
+		"APPLICATION",
+		"DISCONNECTED",
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		localDesc["sessions"],
+		prometheus.GaugeValue,
+		float64(i["APPLICATION"]["IDLE"]),
+		*hc.inventory.localPod.Name,
+		"APPLICATION",
+		"IDLE",
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		localDesc["sessions"],
+		prometheus.GaugeValue,
+		float64(i["APPLICATION"]["PENDING"]),
+		*hc.inventory.localPod.Name,
+		"APPLICATION",
+		"PENDING",
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		localDesc["sessions"],
+		prometheus.GaugeValue,
+		float64(i["DESKTOP"]["CONNECTED"]-i["DESKTOP"]["IDLE"]),
+		*hc.inventory.localPod.Name,
+		"DESKTOP",
+		"ACTIVE",
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		localDesc["sessions"],
+		prometheus.GaugeValue,
+		float64(i["DESKTOP"]["DISCONNECTED"]),
+		*hc.inventory.localPod.Name,
+		"DESKTOP",
+		"DISCONNECTED",
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		localDesc["sessions"],
+		prometheus.GaugeValue,
+		float64(i["DESKTOP"]["IDLE"]),
+		*hc.inventory.localPod.Name,
+		"DESKTOP",
+		"IDLE",
+	)
+
+	ch <- prometheus.MustNewConstMetric(
+		localDesc["sessions"],
+		prometheus.GaugeValue,
+		float64(i["DESKTOP"]["PENDING"]),
+		*hc.inventory.localPod.Name,
+		"DESKTOP",
+		"PENDING",
+	)
+
+	return nil
+}
+
+func (hc *HorizonCollector) collectVirtualCenterMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
+	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel1()
+	items, _, err := hc.ac.ConfigAPI.ListVCInfoV2(ctx1).Execute()
+	if err != nil {
+		return err
+	}
+
+	for _, item := range items {
+		ch <- prometheus.MustNewConstMetric(
+			vcenterDesc["info"],
+			prometheus.GaugeValue,
+			1,
+			*hc.inventory.localPod.Name,
+			*item.ServerName,
+			*item.Id,
+			*item.Version,
+		)
 	}
 
 	return nil

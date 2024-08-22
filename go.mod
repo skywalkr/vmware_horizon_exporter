@@ -8,7 +8,7 @@ require (
 	github.com/prometheus/client_golang v1.19.0
 	github.com/prometheus/common v0.53.0
 	github.com/prometheus/exporter-toolkit v0.11.0
-	github.com/umich-vci/gohorizon v0.0.0
+	github.com/skywalkr/gohorizon/v8 v8.8.0
 	golang.org/x/oauth2 v0.20.0
 	golang.org/x/sync v0.5.0
 )
@@ -31,5 +31,3 @@ require (
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
-
-replace github.com/umich-vci/gohorizon v0.0.0 => ../gohorizon
