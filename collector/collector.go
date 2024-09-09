@@ -31,7 +31,7 @@ var (
 		"info": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "connserver", "info"),
 			"A metric with a constant '1' value labeled by build, pod name, name, id, status, and version",
-			[]string{"build", "horizon_pod_name", "horizon_connection_server_name", "id", "status", "version"}, nil,
+			[]string{"horizon_pod_name", "horizon_connection_server_name", "id", "status", "version"}, nil,
 		),
 		"connections": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "connserver", "connection_count"),
@@ -158,9 +158,10 @@ type HorizonConfig struct {
 }
 
 type HorizonInventory struct {
-	pods  []gohorizon.PodInfo
-	pools []gohorizon.DesktopPoolInfoV2
-	sites []gohorizon.SiteInfo
+	connServers []gohorizon.ConnectionServerInfoV2
+	pods        []gohorizon.PodInfo
+	pools       []gohorizon.DesktopPoolInfoV2
+	sites       []gohorizon.SiteInfo
 
 	localPod  *gohorizon.PodInfo
 	localSite *gohorizon.SiteInfo
@@ -331,6 +332,17 @@ func (hc *HorizonCollector) discover(ctx context.Context) error {
 
 	hc.inventory.pools = pools
 
+	ctx4, cancel4 := context.WithTimeout(ctx, hc.config.Timeout)
+	defer cancel4()
+
+	connServers, _, err := hc.ac.ConfigAPI.ListConnectionServersV2(ctx4).Execute()
+
+	if err != nil {
+		return err
+	}
+
+	hc.inventory.connServers = connServers
+
 	return nil
 }
 
@@ -368,57 +380,67 @@ func (hc *HorizonCollector) collectConnectionServerMetrics(ctx context.Context, 
 		return err
 	}
 
-	for _, item := range items {
+	// API returns limited information when status is unknown so we have to loop thru inventory to find the problematic server
+	for _, connSrv := range hc.inventory.connServers {
+		var status = "UNKNOWN"
+
+		for _, item := range items {
+			if item.Name != nil && *item.Name == *connSrv.Name {
+				status = *item.Status
+
+				ch <- prometheus.MustNewConstMetric(
+					connServerDesc["connections"],
+					prometheus.GaugeValue,
+					float64(*item.ConnectionCount),
+					*hc.inventory.localPod.Name,
+					*connSrv.Name,
+				)
+
+				ch <- prometheus.MustNewConstMetric(
+					connServerDesc["tunnel_connections"],
+					prometheus.GaugeValue,
+					float64(*item.TunnelConnectionCount),
+					*hc.inventory.localPod.Name,
+					*connSrv.Name,
+				)
+
+				for _, subItem := range item.Services {
+					ch <- prometheus.MustNewConstMetric(
+						connServerDesc["service_status"],
+						prometheus.GaugeValue,
+						1,
+						*hc.inventory.localPod.Name,
+						*connSrv.Name,
+						*subItem.ServiceName,
+						*subItem.Status,
+					)
+				}
+
+				for _, subItem := range item.SessionProtocolData {
+					ch <- prometheus.MustNewConstMetric(
+						connServerDesc["protocol_sessions"],
+						prometheus.GaugeValue,
+						float64(*subItem.SessionCount),
+						*hc.inventory.localPod.Name,
+						*connSrv.Name,
+						*subItem.SessionProtocol,
+					)
+				}
+
+				break
+			}
+		}
+
 		ch <- prometheus.MustNewConstMetric(
 			connServerDesc["info"],
 			prometheus.GaugeValue,
 			1,
-			*item.Details.Build,
 			*hc.inventory.localPod.Name,
-			*item.Name,
-			*item.Id,
-			*item.Status,
-			*item.Details.Version,
+			*connSrv.Name,
+			*connSrv.Id,
+			status,
+			*connSrv.Version,
 		)
-
-		ch <- prometheus.MustNewConstMetric(
-			connServerDesc["connections"],
-			prometheus.GaugeValue,
-			float64(*item.ConnectionCount),
-			*hc.inventory.localPod.Name,
-			*item.Name,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			connServerDesc["tunnel_connections"],
-			prometheus.GaugeValue,
-			float64(*item.TunnelConnectionCount),
-			*hc.inventory.localPod.Name,
-			*item.Name,
-		)
-
-		for _, subItem := range item.Services {
-			ch <- prometheus.MustNewConstMetric(
-				connServerDesc["service_status"],
-				prometheus.GaugeValue,
-				1,
-				*hc.inventory.localPod.Name,
-				*item.Name,
-				*subItem.ServiceName,
-				*subItem.Status,
-			)
-		}
-
-		for _, subItem := range item.SessionProtocolData {
-			ch <- prometheus.MustNewConstMetric(
-				connServerDesc["protocol_sessions"],
-				prometheus.GaugeValue,
-				float64(*subItem.SessionCount),
-				*hc.inventory.localPod.Name,
-				*item.Name,
-				*subItem.SessionProtocol,
-			)
-		}
 	}
 
 	return nil
