@@ -7,6 +7,7 @@ import (
 	passwordcredentials "horizon_exporter/oauth2"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -73,12 +74,12 @@ var (
 		),
 		"machines": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "desktpool", "machine_count"),
-			"Number of active connections to the connection server.",
-			[]string{"horizon_pod_name", "horizon_desktop_pool_name"}, nil,
+			"Number of machines in the desktop pool.",
+			[]string{"horizon_pod_name", "horizon_desktop_pool_name", "state"}, nil,
 		),
 		"sessions": prometheus.NewDesc(
 			prometheus.BuildFQName(namespace, "desktpool", "session_count"),
-			"Number of active connections to the connection server.",
+			"Number of connected sessions of the desktop pool.",
 			[]string{"horizon_pod_name", "horizon_desktop_pool_name"}, nil,
 		),
 	}
@@ -463,8 +464,25 @@ func (hc *HorizonCollector) collectDesktopPoolMetrics(ctx context.Context, ch ch
 		return err
 	}
 
+	ctx2, cancel2 := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel2()
+
+	req2 := hc.ac.InventoryAPI.ListMachines(ctx2)
+	items2, _, err := req2.Execute()
+
+	if err != nil {
+		return err
+	}
+
 	for _, item := range items {
 		desktPool := &hc.inventory.pools[slices.IndexFunc(hc.inventory.pools, func(o gohorizon.DesktopPoolInfoV2) bool { return *o.Id == *item.Id })]
+		desktPoolStates := make(map[string]int, 30)
+
+		for _, item2 := range items2 {
+			if strings.Compare(*item.Id, *item2.DesktopPoolId) == 0 {
+				desktPoolStates[*item2.State] += 1
+			}
+		}
 
 		ch <- prometheus.MustNewConstMetric(
 			desktPoolDesc["info"],
@@ -478,13 +496,16 @@ func (hc *HorizonCollector) collectDesktopPoolMetrics(ctx context.Context, ch ch
 			*desktPool.UserAssignment,
 		)
 
-		ch <- prometheus.MustNewConstMetric(
-			desktPoolDesc["machines"],
-			prometheus.GaugeValue,
-			float64(*item.NumMachines),
-			*hc.inventory.localPod.Name,
-			*desktPool.Name,
-		)
+		for key, value := range desktPoolStates {
+			ch <- prometheus.MustNewConstMetric(
+				desktPoolDesc["machines"],
+				prometheus.GaugeValue,
+				float64(value),
+				*hc.inventory.localPod.Name,
+				*desktPool.Name,
+				key,
+			)
+		}
 
 		ch <- prometheus.MustNewConstMetric(
 			desktPoolDesc["sessions"],
@@ -542,97 +563,6 @@ func (hc *HorizonCollector) collectGatewayMetrics(ctx context.Context, ch chan<-
 	return nil
 }
 
-/* func (hc *HorizonCollector) collectGlobalMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
-	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel1()
-	metrics, _, err := hc.ac.MonitorAPI.GetSessionMetrics(ctx1).Execute()
-	if err != nil {
-		return err
-	}
-
-	ch <- prometheus.MustNewConstMetric(
-		localDesc["sessions"],
-		prometheus.GaugeValue,
-		float64(*metrics.ApplicationSessionMetrics.NumActiveSessions),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-		"APPLICATION",
-		"ACTIVE",
-	)
-
-	ch <- prometheus.MustNewConstMetric(
-		localDesc["sessions"],
-		prometheus.GaugeValue,
-		float64(*metrics.ApplicationSessionMetrics.NumDisconnectedSessions),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-		"APPLICATION",
-		"DISCONNECTED",
-	)
-
-	ch <- prometheus.MustNewConstMetric(
-		localDesc["sessions"],
-		prometheus.GaugeValue,
-		float64(*metrics.ApplicationSessionMetrics.NumIdleSessions),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-		"APPLICATION",
-		"IDLE",
-	)
-
-	ch <- prometheus.MustNewConstMetric(
-		localDesc["sessions"],
-		prometheus.GaugeValue,
-		float64(*metrics.ApplicationSessionMetrics.NumPendingSessions),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-		"APPLICATION",
-		"PENDING",
-	)
-
-	ch <- prometheus.MustNewConstMetric(
-		localDesc["sessions"],
-		prometheus.GaugeValue,
-		float64(*metrics.DesktopSessionMetrics.NumActiveSessions),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-		"DESKTOP",
-		"ACTIVE",
-	)
-
-	ch <- prometheus.MustNewConstMetric(
-		localDesc["sessions"],
-		prometheus.GaugeValue,
-		float64(*metrics.DesktopSessionMetrics.NumDisconnectedSessions),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-		"DESKTOP",
-		"DISCONNECTED",
-	)
-
-	ch <- prometheus.MustNewConstMetric(
-		localDesc["sessions"],
-		prometheus.GaugeValue,
-		float64(*metrics.DesktopSessionMetrics.NumIdleSessions),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-		"DESKTOP",
-		"IDLE",
-	)
-
-	ch <- prometheus.MustNewConstMetric(
-		localDesc["sessions"],
-		prometheus.GaugeValue,
-		float64(*metrics.DesktopSessionMetrics.NumPendingSessions),
-		*hc.inventory.localSite.Name,
-		*hc.inventory.localPod.Name,
-		"DESKTOP",
-		"PENDING",
-	)
-
-	return nil
-} */
-
 func (hc *HorizonCollector) collectLicenseMetrics(ctx context.Context, ch chan<- prometheus.Metric) error {
 	ctx1, cancel1 := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel1()
@@ -666,38 +596,6 @@ func (hc *HorizonCollector) collectLicenseMetrics(ctx context.Context, ch chan<-
 		float64(*expiry),
 		*hc.inventory.localPod.Name,
 	)
-
-	/* 	ch <- prometheus.MustNewConstMetric(
-	   		licenseDesc["usage_collaborators_total"],
-	   		prometheus.GaugeValue,
-	   		float64(*metric.CurrentUsage.TotalCollaborators),
-	   		*hc.inventory.localSite.Name,
-	   		*hc.inventory.localPod.Name,
-	   	)
-
-	   	ch <- prometheus.MustNewConstMetric(
-	   		licenseDesc["usage_concurrent_connections_total"],
-	   		prometheus.GaugeValue,
-	   		float64(*metric.CurrentUsage.TotalConcurrentConnections),
-	   		*hc.inventory.localSite.Name,
-	   		*hc.inventory.localPod.Name,
-	   	)
-
-	   	ch <- prometheus.MustNewConstMetric(
-	   		licenseDesc["usage_concurrent_sessions_total"],
-	   		prometheus.GaugeValue,
-	   		float64(*metric.CurrentUsage.TotalConcurrentSessions),
-	   		*hc.inventory.localSite.Name,
-	   		*hc.inventory.localPod.Name,
-	   	)
-
-	   	ch <- prometheus.MustNewConstMetric(
-	   		licenseDesc["usage_named_users_total"],
-	   		prometheus.GaugeValue,
-	   		float64(*metric.CurrentUsage.TotalNamedUsers),
-	   		*hc.inventory.localSite.Name,
-	   		*hc.inventory.localPod.Name,
-	   	) */
 
 	return nil
 }
