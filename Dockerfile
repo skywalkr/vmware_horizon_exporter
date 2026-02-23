@@ -1,10 +1,10 @@
-ARG ARCH="amd64"
-ARG OS="linux"
-FROM quay.io/prometheus/busybox-${OS}-${ARCH}:latest
+ARG TARGETOS
+ARG TARGETARCH
+FROM quay.io/prometheus/busybox-${TARGETOS}-${TARGETARCH}:latest
 
-ARG ARCH="amd64"
-ARG OS="linux"
-COPY .build/${OS}-${ARCH}/horizon_exporter /bin/horizon_exporter
+ARG TARGETOS
+ARG TARGETARCH
+COPY .build/${TARGETOS}-${TARGETARCH}/horizon_exporter /bin/horizon_exporter
 
 EXPOSE      9181
 USER        nobody
