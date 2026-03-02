@@ -571,13 +571,11 @@ func (hc *HorizonCollector) collectLicenseMetrics(ctx context.Context, ch chan<-
 		return err
 	}
 
-	var expiry *int64
+	var expiry int64 = 0
+	var health string = "GREEN"
 	if *items[0].LicenseMode == "SUBSCRIPTION" {
-		if *items[0].ExpirationTime < *items[0].SubscriptionSliceExpiry {
-			expiry = items[0].ExpirationTime
-		} else {
-			expiry = items[0].SubscriptionSliceExpiry
-		}
+		expiry = *items[0].ExpirationTime
+		health = *items[0].LicenseHealth
 	}
 
 	ch <- prometheus.MustNewConstMetric(
@@ -586,14 +584,14 @@ func (hc *HorizonCollector) collectLicenseMetrics(ctx context.Context, ch chan<-
 		1,
 		*hc.inventory.localPod.Name,
 		*items[0].LicenseMode,
-		*items[0].LicenseHealth,
+		health,
 		*items[0].UsageModel,
 	)
 
 	ch <- prometheus.MustNewConstMetric(
 		licenseDesc["earliest_expiry"],
 		prometheus.GaugeValue,
-		float64(*expiry),
+		float64(expiry),
 		*hc.inventory.localPod.Name,
 	)
 
